@@ -3,48 +3,45 @@
 <head>
     <title>Monitor Familiar</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="manifest" href="manifest.json">
     <style>
         body { 
             margin: 0; 
-            padding: 0; 
+            padding: 20px; 
             background: #000; 
             color: white;
             font-family: Arial;
-            overflow: hidden;
+            text-align: center;
         }
         
-        #controls {
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            z-index: 1000;
-            background: rgba(0,0,0,0.8);
-            padding: 15px;
-            border-radius: 10px;
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: #111;
+            padding: 20px;
+            border-radius: 15px;
             border: 2px solid #4CAF50;
         }
         
         button {
-            padding: 12px 20px;
-            margin: 5px;
+            padding: 15px 25px;
+            margin: 10px;
             border: none;
-            border-radius: 20px;
-            font-size: 16px;
+            border-radius: 25px;
+            font-size: 18px;
             cursor: pointer;
-            transition: all 0.3s;
+            background: #4CAF50;
+            color: white;
         }
         
-        #startBtn { background: #4CAF50; color: white; }
-        #stopBtn { background: #f44336; color: white; }
-        
-        button:hover { transform: scale(1.05); }
-        button:disabled { background: #666; cursor: not-allowed; }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
         
         #status {
-            margin: 10px 0;
-            padding: 8px;
-            border-radius: 5px;
+            margin: 15px 0;
+            padding: 10px;
+            border-radius: 8px;
             font-weight: bold;
         }
         
@@ -52,31 +49,49 @@
         .disconnected { background: rgba(244, 67, 54, 0.3); }
         
         video {
-            width: 100vw;
-            height: 100vh;
-            object-fit: cover;
+            width: 100%;
+            max-width: 400px;
+            border-radius: 10px;
+            border: 3px solid #4CAF50;
+            margin: 15px 0;
         }
         
         .hidden { display: none; }
     </style>
 </head>
 <body>
-    <div id="controls">
-        <h3>📷 Monitor Familiar</h3>
-        <div id="status" class="disconnected">⚫ Clique em INICIAR</div>
+    <div class="container">
+        <h1>📷 Monitor Familiar</h1>
+        <p>Transmissão via GitHub Pages</p>
+        
+        <div id="status" class="disconnected">
+            ⚫ Clique em INICIAR
+        </div>
+        
         <button id="startBtn" onclick="startCamera()">🎥 INICIAR TRANSMISSÃO</button>
         <button id="stopBtn" onclick="stopCamera()" disabled>⏹️ PARAR TRANSMISSÃO</button>
-        <div style="font-size: 12px; margin-top: 10px; opacity: 0.8;">
-            ID da Sessão: <span id="sessionId">---</span>
+        
+        <div id="videoContainer">
+            <video id="localVideo" autoplay muted playsinline></video>
+        </div>
+        
+        <div style="margin-top: 20px; font-size: 12px; opacity: 0.8;">
+            Sessão: <span id="sessionId">---</span><br>
+            Funciona em background
         </div>
     </div>
 
-    <video id="localVideo" autoplay muted playsinline></video>
-
     <script>
+        // CONFIGURE AQUI - SEU TOKEN DO GITHUB
+        const GITHUB_TOKEN = 'ghp_seu_token_aqui'; // Veja como criar abaixo
+        const REPO_OWNER = 'josefany-kira';
+        const REPO_NAME = 'josefany-kira.github.io';
+        const BRANCH = 'main';
+        
         let localStream = null;
         let isTransmitting = false;
         let sessionId = generateSessionId();
+        let frameCount = 0;
 
         // Mostrar ID da sessão
         document.getElementById('sessionId').textContent = sessionId;
@@ -87,37 +102,29 @@
 
         async function startCamera() {
             try {
-                updateStatus('🟡 Solicitando acesso à câmera...', 'disconnected');
+                updateStatus('🟡 Solicitando acesso à câmera...');
                 
-                // Solicitar câmera
                 localStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { 
-                        width: 1280, 
-                        height: 720,
+                        width: 640, 
+                        height: 480,
                         facingMode: 'environment'
                     }, 
                     audio: false 
                 });
 
-                // Mostrar vídeo
                 const videoElement = document.getElementById('localVideo');
                 videoElement.srcObject = localStream;
                 
-                // Atualizar UI
-                updateStatus('🟢 TRANSMITINDO', 'connected');
+                updateStatus('🟢 TRANSMITINDO para GitHub...');
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 
                 isTransmitting = true;
-                
-                // Iniciar transmissão
                 startFrameTransmission();
                 
-                console.log('Câmera iniciada - Sessão:', sessionId);
-
             } catch (error) {
-                console.error('Erro câmera:', error);
-                updateStatus('🔴 Erro: ' + error.message, 'disconnected');
+                updateStatus('🔴 Erro: ' + error.message);
             }
         }
 
@@ -127,55 +134,107 @@
                 localStream = null;
             }
             
-            updateStatus('⚫ Transmissão parada', 'disconnected');
+            updateStatus('⚫ Transmissão parada');
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
-            
             isTransmitting = false;
         }
 
-        function updateStatus(message, type) {
-            const statusElement = document.getElementById('status');
-            statusElement.textContent = message;
-            statusElement.className = type;
+        function updateStatus(message) {
+            document.getElementById('status').textContent = message;
         }
 
-        // Transmitir frames (simulação - sem servidor)
-        function startFrameTransmission() {
+        async function startFrameTransmission() {
             const video = document.getElementById('localVideo');
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             
-            canvas.width = 640;
-            canvas.height = 480;
+            canvas.width = 320;
+            canvas.height = 240;
             
-            function captureFrame() {
+            async function captureFrame() {
                 if (!isTransmitting) return;
                 
                 try {
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                     
-                    // Aqui normalmente enviaria para servidor
-                    // Mas como GitHub Pages não suporta PHP, apenas simulamos
-                    console.log('Frame capturado - Sessão:', sessionId);
+                    // Converter para base64
+                    const base64Image = canvas.toDataURL('image/jpeg', 0.7);
+                    
+                    // Enviar para GitHub
+                    await uploadFrameToGitHub(base64Image);
+                    
+                    frameCount++;
                     
                 } catch (error) {
                     console.log('Erro frame:', error);
                 }
                 
-                setTimeout(captureFrame, 1000);
+                // Continuar capturando
+                setTimeout(captureFrame, 2000); // 0.5 FPS
             }
             
             captureFrame();
         }
 
-        // Tentar iniciar automaticamente
+        async function uploadFrameToGitHub(base64Image) {
+            try {
+                const filename = `frames/${sessionId}_latest.jpg`;
+                const content = base64Image.split(',')[1]; // Remover header
+                
+                // Verificar se arquivo já existe para obter SHA
+                let sha = null;
+                try {
+                    const existingFile = await githubApi(`/contents/${filename}`);
+                    sha = existingFile.sha;
+                } catch (e) {
+                    // Arquivo não existe ainda
+                }
+                
+                // Upload do frame
+                const response = await githubApi(`/contents/${filename}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        message: `Update frame ${frameCount}`,
+                        content: content,
+                        branch: BRANCH,
+                        sha: sha
+                    })
+                });
+                
+                console.log('Frame enviado:', frameCount);
+                
+            } catch (error) {
+                console.error('Erro upload GitHub:', error);
+            }
+        }
+
+        async function githubApi(endpoint, options = {}) {
+            const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}${endpoint}`;
+            
+            const defaultOptions = {
+                headers: {
+                    'Authorization': `token ${GITHUB_TOKEN}`,
+                    'Content-Type': 'application/json',
+                }
+            };
+            
+            const response = await fetch(url, { ...defaultOptions, ...options });
+            
+            if (!response.ok) {
+                throw new Error(`GitHub API error: ${response.status}`);
+            }
+            
+            return await response.json();
+        }
+
+        // Iniciar automaticamente
         setTimeout(() => {
             if (!isTransmitting) {
                 startCamera();
             }
-        }, 2000);
+        }, 1000);
 
     </script>
 </body>
-</html>
+    </html>
