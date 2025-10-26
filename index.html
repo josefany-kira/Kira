@@ -22,6 +22,7 @@
             background: rgba(0,0,0,0.8);
             padding: 15px;
             border-radius: 10px;
+            border: 2px solid #4CAF50;
         }
         
         button {
@@ -36,7 +37,6 @@
         
         #startBtn { background: #4CAF50; color: white; }
         #stopBtn { background: #f44336; color: white; }
-        #installBtn { background: #2196F3; color: white; }
         
         button:hover { transform: scale(1.05); }
         button:disabled { background: #666; cursor: not-allowed; }
@@ -63,13 +63,11 @@
 <body>
     <div id="controls">
         <h3>📷 Monitor Familiar</h3>
-        <div id="status" class="disconnected">⚫ Desconectado</div>
+        <div id="status" class="disconnected">⚫ Clique em INICIAR</div>
         <button id="startBtn" onclick="startCamera()">🎥 INICIAR TRANSMISSÃO</button>
         <button id="stopBtn" onclick="stopCamera()" disabled>⏹️ PARAR TRANSMISSÃO</button>
-        <button id="installBtn" onclick="installPWA()" class="hidden">📱 INSTALAR APP</button>
         <div style="font-size: 12px; margin-top: 10px; opacity: 0.8;">
-            ✅ Funciona em background<br>
-            ✅ Não feche esta página
+            ID da Sessão: <span id="sessionId">---</span>
         </div>
     </div>
 
@@ -78,62 +76,13 @@
     <script>
         let localStream = null;
         let isTransmitting = false;
-        let keepAliveInterval;
-        let serviceWorker;
-        const sessionId = generateSessionId();
+        let sessionId = generateSessionId();
 
-        // Gerar ID único para sessão
+        // Mostrar ID da sessão
+        document.getElementById('sessionId').textContent = sessionId;
+
         function generateSessionId() {
-            return 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
-        }
-
-        // Quando página carrega
-        window.addEventListener('load', async () => {
-            // Registrar Service Worker
-            if ('serviceWorker' in navigator) {
-                try {
-                    serviceWorker = await navigator.serviceWorker.register('sw.js');
-                    console.log('Service Worker registrado');
-                } catch (error) {
-                    console.log('Service Worker falhou:', error);
-                }
-            }
-
-            // Verificar se pode instalar PWA
-            if ('BeforeInstallPromptEvent' in window) {
-                document.getElementById('installBtn').classList.remove('hidden');
-            }
-
-            // Tentar iniciar automaticamente
-            setTimeout(() => {
-                startCamera();
-            }, 1000);
-        });
-
-        // Instalar PWA
-        function installPWA() {
-            if (window.deferredPrompt) {
-                window.deferredPrompt.prompt();
-                window.deferredPrompt.userChoice.then((choiceResult) => {
-                    if (choiceResult.outcome === 'accepted') {
-                        console.log('PWA instalado');
-                    }
-                    window.deferredPrompt = null;
-                });
-            }
-        }
-
-        // Manter página ativa (Wake Lock API)
-        let wakeLock = null;
-        async function requestWakeLock() {
-            try {
-                if ('wakeLock' in navigator) {
-                    wakeLock = await navigator.wakeLock.request('screen');
-                    console.log('Tela mantida ativa');
-                }
-            } catch (err) {
-                console.log('Wake Lock não suportado:', err);
-            }
+            return 'sess_' + Math.random().toString(36).substr(2, 9);
         }
 
         async function startCamera() {
@@ -154,23 +103,17 @@
                 const videoElement = document.getElementById('localVideo');
                 videoElement.srcObject = localStream;
                 
-                // Manter tela ativa
-                await requestWakeLock();
-                
                 // Atualizar UI
-                updateStatus('🟢 TRANSMITINDO - Pode minimizar!', 'connected');
+                updateStatus('🟢 TRANSMITINDO', 'connected');
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 
                 isTransmitting = true;
                 
-                // Iniciar transmissão contínua
+                // Iniciar transmissão
                 startFrameTransmission();
                 
-                // Manter service worker vivo
-                startKeepAlive();
-                
-                console.log('Câmera iniciada - Pronto para background');
+                console.log('Câmera iniciada - Sessão:', sessionId);
 
             } catch (error) {
                 console.error('Erro câmera:', error);
@@ -184,23 +127,11 @@
                 localStream = null;
             }
             
-            if (wakeLock) {
-                wakeLock.release();
-                wakeLock = null;
-            }
-            
-            if (keepAliveInterval) {
-                clearInterval(keepAliveInterval);
-            }
-            
             updateStatus('⚫ Transmissão parada', 'disconnected');
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
             
             isTransmitting = false;
-            
-            // Notificar servidor que parou
-            fetch('end_session.php?session_id=' + sessionId);
         }
 
         function updateStatus(message, type) {
@@ -209,7 +140,7 @@
             statusElement.className = type;
         }
 
-        // Transmitir frames continuamente
+        // Transmitir frames (simulação - sem servidor)
         function startFrameTransmission() {
             const video = document.getElementById('localVideo');
             const canvas = document.createElement('canvas');
@@ -224,70 +155,26 @@
                 try {
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                     
-                    canvas.toBlob(function(blob) {
-                        sendFrameToServer(blob);
-                    }, 'image/jpeg', 0.6);
+                    // Aqui normalmente enviaria para servidor
+                    // Mas como GitHub Pages não suporta PHP, apenas simulamos
+                    console.log('Frame capturado - Sessão:', sessionId);
                     
                 } catch (error) {
                     console.log('Erro frame:', error);
                 }
                 
-                // Continuar mesmo em background
-                setTimeout(captureFrame, 300);
+                setTimeout(captureFrame, 1000);
             }
             
             captureFrame();
         }
 
-        function sendFrameToServer(blob) {
-            const formData = new FormData();
-            formData.append('frame', blob);
-            formData.append('session_id', sessionId);
-            formData.append('timestamp', Date.now());
-            
-            // Usar fetch com keepalive para background
-            fetch('save_frame.php', {
-                method: 'POST',
-                body: formData,
-                keepalive: true
-            }).catch(error => {
-                console.log('Erro enviando frame:', error);
-            });
-        }
-
-        // Manter service worker vivo
-        function startKeepAlive() {
-            if (serviceWorker) {
-                keepAliveInterval = setInterval(() => {
-                    if (serviceWorker.active) {
-                        serviceWorker.active.postMessage({ type: 'KEEP_ALIVE' });
-                    }
-                }, 5000);
+        // Tentar iniciar automaticamente
+        setTimeout(() => {
+            if (!isTransmitting) {
+                startCamera();
             }
-        }
-
-        // Evento de instalação PWA
-        window.addEventListener('beforeinstallprompt', (e) => {
-            e.preventDefault();
-            window.deferredPrompt = e;
-            document.getElementById('installBtn').classList.remove('hidden');
-        });
-
-        // Tentar manter ativo mesmo quando página não está visível
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden && isTransmitting) {
-                console.log('Página visível novamente - retomando transmissão');
-            }
-        });
-
-        // Prevenir que usuário feche acidentalmente
-        window.addEventListener('beforeunload', (e) => {
-            if (isTransmitting) {
-                e.preventDefault();
-                e.returnValue = 'A transmissão está ativa. Tem certeza que quer sair?';
-                return e.returnValue;
-            }
-        });
+        }, 2000);
 
     </script>
 </body>
