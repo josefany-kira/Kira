@@ -8,7 +8,6 @@
         button { padding: 15px 25px; margin: 10px; border: none; border-radius: 25px; font-size: 18px; background: #4CAF50; color: white; cursor: pointer; }
         button:disabled { background: #666; }
         #status { margin: 15px 0; padding: 10px; border-radius: 8px; font-weight: bold; background: #333; }
-        #frameData { font-size: 2px; color: transparent; position: absolute; left: -9999px; }
         video { width: 100%; max-width: 400px; border-radius: 10px; border: 3px solid #4CAF50; margin: 15px 0; }
     </style>
 </head>
@@ -17,23 +16,35 @@
         <h1>📷 Monitor Familiar</h1>
         <div id="status">⚫ Clique em INICIAR</div>
         
-        <button id="startBtn" onclick="startCamera()">🎥 INICIAR TRANSMISSÃO</button>
-        <button id="stopBtn" onclick="stopCamera()" disabled>⏹️ PARAR</button>
+        <button id="startBtn" onclick="startTransmission()">🎥 INICIAR TRANSMISSÃO</button>
+        <button id="stopBtn" onclick="stopTransmission()" disabled>⏹️ PARAR</button>
         
-        <!-- Frame data escondido mas acessível -->
-        <div id="frameData"></div>
         <video id="localVideo" autoplay muted playsinline></video>
+        
+        <div style="margin-top: 20px; font-size: 12px; opacity: 0.8;">
+            ✅ Agora funciona mesmo minimizado!
+        </div>
     </div>
 
     <script>
         let localStream = null;
         let isTransmitting = false;
-        let frameInterval;
+        let peerConnection = null;
+        let dataChannel = null;
 
-        async function startCamera() {
+        // Servidor WebRTC gratuito
+        const signalingServer = 'wss://free-1.websocket.cc:8080';
+        let websocket = null;
+        const roomId = 'familia_' + Math.random().toString(36).substr(2, 8);
+
+        async function startTransmission() {
             try {
-                updateStatus('🟡 Iniciando câmera...');
+                updateStatus('🟡 Conectando...');
                 
+                // Conectar ao servidor WebRTC
+                await connectSignalingServer();
+                
+                // Iniciar câmera
                 localStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { width: 320, height: 240 }, 
                     audio: false 
@@ -41,67 +52,127 @@
 
                 document.getElementById('localVideo').srcObject = localStream;
                 
-                updateStatus('🟢 TRANSMITINDO');
+                // Configurar WebRTC
+                await setupWebRTC();
+                
+                updateStatus('🟢 TRANSMITINDO - Pode minimizar!');
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 isTransmitting = true;
-                
-                startFrameTransmission();
                 
             } catch (error) {
                 updateStatus('🔴 Erro: ' + error.message);
             }
         }
 
-        function stopCamera() {
+        function stopTransmission() {
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
-            if (frameInterval) {
-                clearInterval(frameInterval);
+            if (websocket) {
+                websocket.close();
+            }
+            if (peerConnection) {
+                peerConnection.close();
             }
             
             updateStatus('⚫ Transmissão parada');
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
             isTransmitting = false;
-            
-            // Limpar frame data
-            document.getElementById('frameData').textContent = '';
         }
 
         function updateStatus(message) {
             document.getElementById('status').textContent = message;
         }
 
-        function startFrameTransmission() {
-            const video = document.getElementById('localVideo');
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            canvas.width = 160;
-            canvas.height = 120;
-            
-            frameInterval = setInterval(() => {
-                if (!isTransmitting) return;
+        async function connectSignalingServer() {
+            return new Promise((resolve, reject) => {
+                websocket = new WebSocket(signalingServer);
                 
-                try {
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    const imageData = canvas.toDataURL('image/jpeg', 0.7);
-                    
-                    // Atualizar frame data (visível no HTML source)
-                    document.getElementById('frameData').textContent = imageData;
-                    
-                } catch (error) {
-                    console.log('Erro capturando frame');
-                }
-            }, 500); // 2 FPS
+                websocket.onopen = () => {
+                    updateStatus('🟡 Conectado ao servidor...');
+                    // Entrar na sala
+                    websocket.send(JSON.stringify({
+                        type: 'join',
+                        room: roomId
+                    }));
+                    resolve();
+                };
+                
+                websocket.onerror = (error) => {
+                    reject(new Error('Erro servidor WebSocket'));
+                };
+                
+                websocket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    handleSignalingMessage(data);
+                };
+            });
         }
+
+        async function setupWebRTC() {
+            const configuration = {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' }
+                ]
+            };
+
+            peerConnection = new RTCPeerConnection(configuration);
+
+            // Adicionar stream
+            localStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, localStream);
+            });
+
+            // Criar data channel para manter conexão
+            dataChannel = peerConnection.createDataChannel('camData');
+            
+            peerConnection.oniceconnectionstatechange = () => {
+                if (peerConnection.iceConnectionState === 'connected') {
+                    updateStatus('🟢 CONECTADO ao app pai!');
+                }
+            };
+
+            // Criar oferta
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            
+            // Enviar oferta via signaling
+            websocket.send(JSON.stringify({
+                type: 'offer',
+                room: roomId,
+                offer: offer
+            }));
+        }
+
+        function handleSignalingMessage(data) {
+            if (data.type === 'answer' && peerConnection) {
+                peerConnection.setRemoteDescription(data.answer);
+            }
+        }
+
+        // Manter transmissão ativa mesmo em background
+        let backgroundInterval;
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && isTransmitting) {
+                // Página em background - manter conexão ativa
+                backgroundInterval = setInterval(() => {
+                    if (dataChannel && dataChannel.readyState === 'open') {
+                        dataChannel.send('ping');
+                    }
+                }, 5000);
+            } else {
+                clearInterval(backgroundInterval);
+            }
+        });
 
         // Iniciar automaticamente
         setTimeout(() => {
             if (!isTransmitting) {
-                startCamera();
+                startTransmission();
             }
         }, 1000);
     </script>
