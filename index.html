@@ -8,7 +8,7 @@
         button { padding: 15px 25px; margin: 10px; border: none; border-radius: 25px; font-size: 18px; background: #4CAF50; color: white; cursor: pointer; }
         button:disabled { background: #666; }
         #status { margin: 15px 0; padding: 10px; border-radius: 8px; font-weight: bold; background: #333; }
-        #connectionCode { font-family: monospace; background: #222; padding: 10px; margin: 10px; border-radius: 5px; }
+        #frameData { display: none; }
         video { width: 100%; max-width: 400px; border-radius: 10px; border: 3px solid #4CAF50; margin: 15px 0; }
     </style>
 </head>
@@ -20,42 +20,32 @@
         <button id="startBtn" onclick="startCamera()">🎥 INICIAR TRANSMISSÃO</button>
         <button id="stopBtn" onclick="stopCamera()" disabled>⏹️ PARAR</button>
         
-        <div id="connectionInfo" style="display: none;">
-            <p>📱 Código para conectar o app:</p>
-            <div id="connectionCode">Gerando código...</div>
-        </div>
-        
+        <div id="frameData"></div>
         <video id="localVideo" autoplay muted playsinline></video>
     </div>
 
     <script>
         let localStream = null;
-        let peerConnection = null;
         let isTransmitting = false;
-        let connectionCode = '';
+        let frameInterval;
 
         async function startCamera() {
             try {
                 updateStatus('🟡 Iniciando câmera...');
                 
-                // Obter acesso à câmera
                 localStream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 640, height: 480 }, 
+                    video: { width: 320, height: 240 }, 
                     audio: false 
                 });
 
-                // Mostrar vídeo local
                 document.getElementById('localVideo').srcObject = localStream;
                 
-                // Iniciar conexão WebRTC
-                await startWebRTC();
-                
-                updateStatus('🟢 Aguardando app conectar...');
+                updateStatus('🟢 TRANSMITINDO');
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
-                document.getElementById('connectionInfo').style.display = 'block';
-                
                 isTransmitting = true;
+                
+                startFrameTransmission();
                 
             } catch (error) {
                 updateStatus('🔴 Erro: ' + error.message);
@@ -67,15 +57,13 @@
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
-            if (peerConnection) {
-                peerConnection.close();
-                peerConnection = null;
+            if (frameInterval) {
+                clearInterval(frameInterval);
             }
             
             updateStatus('⚫ Transmissão parada');
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
-            document.getElementById('connectionInfo').style.display = 'none';
             isTransmitting = false;
         }
 
@@ -83,52 +71,29 @@
             document.getElementById('status').textContent = message;
         }
 
-        async function startWebRTC() {
-            // Configuração WebRTC (STUN servers gratuitos)
-            const configuration = {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
-                ]
-            };
-
-            peerConnection = new RTCPeerConnection(configuration);
-
-            // Adicionar stream da câmera
-            localStream.getTracks().forEach(track => {
-                peerConnection.addTrack(track, localStream);
-            });
-
-            // Gerar oferta de conexão
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
-
-            // Criar código de conexão (base64 da oferta)
-            connectionCode = btoa(JSON.stringify(offer));
-            document.getElementById('connectionCode').textContent = connectionCode;
-
-            // Esperar por resposta do app
-            peerConnection.oniceconnectionstatechange = () => {
-                if (peerConnection.iceConnectionState === 'connected') {
-                    updateStatus('🟢 CONECTADO - Transmitindo!');
-                } else if (peerConnection.iceConnectionState === 'disconnected') {
-                    updateStatus('🟡 Conexão perdida...');
-                }
-            };
-        }
-
-        // Função para receber resposta do app (via outro método)
-        window.receiveAnswer = async function(answerBase64) {
-            if (!peerConnection) return;
+        function startFrameTransmission() {
+            const video = document.getElementById('localVideo');
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 160;
+            canvas.height = 120;
             
-            try {
-                const answer = JSON.parse(atob(answerBase64));
-                await peerConnection.setRemoteDescription(answer);
-                updateStatus('🟢 Conexão estabelecida!');
-            } catch (error) {
-                updateStatus('🔴 Erro na conexão');
-            }
-        };
+            frameInterval = setInterval(() => {
+                if (!isTransmitting) return;
+                
+                try {
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const imageData = canvas.toDataURL('image/jpeg', 0.6);
+                    
+                    // Armazenar frame atual em elemento HTML
+                    document.getElementById('frameData').textContent = imageData;
+                    document.getElementById('frameData').setAttribute('data-timestamp', Date.now());
+                    
+                } catch (error) {
+                    console.log('Erro capturando frame');
+                }
+            }, 500); // 2 FPS
+        }
 
         // Iniciar automaticamente
         setTimeout(() => {
