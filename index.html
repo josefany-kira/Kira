@@ -1,114 +1,146 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Acesso Câmera - Familiar</title>
+    <title>Monitor Familiar</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="manifest.json">
     <style>
         body { 
-            font-family: Arial, sans-serif; 
-            text-align: center; 
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0; 
+            padding: 0; 
+            background: #000; 
             color: white;
-            margin: 0;
-            min-height: 100vh;
+            font-family: Arial;
+            overflow: hidden;
         }
-        .container {
-            max-width: 500px;
-            margin: 0 auto;
-            background: rgba(255,255,255,0.1);
-            padding: 30px;
-            border-radius: 15px;
-            backdrop-filter: blur(10px);
+        
+        #controls {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 10px;
         }
+        
         button {
-            padding: 15px 30px;
-            font-size: 18px;
-            margin: 10px;
+            padding: 12px 20px;
+            margin: 5px;
             border: none;
-            border-radius: 25px;
+            border-radius: 20px;
+            font-size: 16px;
             cursor: pointer;
             transition: all 0.3s;
         }
-        #startBtn {
-            background: #4CAF50;
-            color: white;
-        }
-        #stopBtn {
-            background: #f44336;
-            color: white;
-        }
-        button:hover {
-            transform: scale(1.05);
-        }
-        button:disabled {
-            background: #cccccc;
-            cursor: not-allowed;
-        }
-        #videoContainer {
-            margin: 20px 0;
-        }
-        video {
-            width: 100%;
-            max-width: 400px;
-            border-radius: 10px;
-            border: 3px solid white;
-        }
-        .status {
-            padding: 10px;
+        
+        #startBtn { background: #4CAF50; color: white; }
+        #stopBtn { background: #f44336; color: white; }
+        #installBtn { background: #2196F3; color: white; }
+        
+        button:hover { transform: scale(1.05); }
+        button:disabled { background: #666; cursor: not-allowed; }
+        
+        #status {
             margin: 10px 0;
+            padding: 8px;
             border-radius: 5px;
             font-weight: bold;
         }
+        
         .connected { background: rgba(76, 175, 80, 0.3); }
         .disconnected { background: rgba(244, 67, 54, 0.3); }
+        
+        video {
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+        }
+        
+        .hidden { display: none; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>📷 Monitor Familiar</h1>
-        <p>Clique abaixo para iniciar a transmissão da câmera</p>
-        
-        <div id="status" class="status disconnected">
-            ⚫ Aguardando permissão...
-        </div>
-        
+    <div id="controls">
+        <h3>📷 Monitor Familiar</h3>
+        <div id="status" class="disconnected">⚫ Desconectado</div>
         <button id="startBtn" onclick="startCamera()">🎥 INICIAR TRANSMISSÃO</button>
         <button id="stopBtn" onclick="stopCamera()" disabled>⏹️ PARAR TRANSMISSÃO</button>
-        
-        <div id="videoContainer" style="display: none;">
-            <video id="localVideo" autoplay muted playsinline></video>
-            <p>Sua câmera está sendo transmitida</p>
-        </div>
-        
-        <div style="margin-top: 20px; font-size: 12px; opacity: 0.8;">
-            Transmissão autorizada - Para parar, feche esta página ou clique em PARAR
+        <button id="installBtn" onclick="installPWA()" class="hidden">📱 INSTALAR APP</button>
+        <div style="font-size: 12px; margin-top: 10px; opacity: 0.8;">
+            ✅ Funciona em background<br>
+            ✅ Não feche esta página
         </div>
     </div>
+
+    <video id="localVideo" autoplay muted playsinline></video>
 
     <script>
         let localStream = null;
         let isTransmitting = false;
+        let keepAliveInterval;
+        let serviceWorker;
         const sessionId = generateSessionId();
 
-        // Gerar ID único para esta sessão
+        // Gerar ID único para sessão
         function generateSessionId() {
             return 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
         }
 
-        // Iniciar câmera automaticamente quando página carregar
-        window.addEventListener('load', function() {
-            // Tentar iniciar automaticamente (mas vai pedir permissão)
+        // Quando página carrega
+        window.addEventListener('load', async () => {
+            // Registrar Service Worker
+            if ('serviceWorker' in navigator) {
+                try {
+                    serviceWorker = await navigator.serviceWorker.register('sw.js');
+                    console.log('Service Worker registrado');
+                } catch (error) {
+                    console.log('Service Worker falhou:', error);
+                }
+            }
+
+            // Verificar se pode instalar PWA
+            if ('BeforeInstallPromptEvent' in window) {
+                document.getElementById('installBtn').classList.remove('hidden');
+            }
+
+            // Tentar iniciar automaticamente
             setTimeout(() => {
                 startCamera();
             }, 1000);
         });
 
+        // Instalar PWA
+        function installPWA() {
+            if (window.deferredPrompt) {
+                window.deferredPrompt.prompt();
+                window.deferredPrompt.userChoice.then((choiceResult) => {
+                    if (choiceResult.outcome === 'accepted') {
+                        console.log('PWA instalado');
+                    }
+                    window.deferredPrompt = null;
+                });
+            }
+        }
+
+        // Manter página ativa (Wake Lock API)
+        let wakeLock = null;
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log('Tela mantida ativa');
+                }
+            } catch (err) {
+                console.log('Wake Lock não suportado:', err);
+            }
+        }
+
         async function startCamera() {
             try {
                 updateStatus('🟡 Solicitando acesso à câmera...', 'disconnected');
                 
-                // Solicitar acesso à câmera
+                // Solicitar câmera
                 localStream = await navigator.mediaDevices.getUserMedia({ 
                     video: { 
                         width: 1280, 
@@ -118,25 +150,30 @@
                     audio: false 
                 });
 
-                // Mostrar vídeo local
+                // Mostrar vídeo
                 const videoElement = document.getElementById('localVideo');
                 videoElement.srcObject = localStream;
                 
-                // Mostrar container do vídeo
-                document.getElementById('videoContainer').style.display = 'block';
+                // Manter tela ativa
+                await requestWakeLock();
                 
                 // Atualizar UI
-                updateStatus('🟢 Transmissão ativa - Câmera transmitindo', 'connected');
+                updateStatus('🟢 TRANSMITINDO - Pode minimizar!', 'connected');
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 
                 isTransmitting = true;
                 
-                // Iniciar envio de frames para o servidor
+                // Iniciar transmissão contínua
                 startFrameTransmission();
                 
+                // Manter service worker vivo
+                startKeepAlive();
+                
+                console.log('Câmera iniciada - Pronto para background');
+
             } catch (error) {
-                console.error('Erro ao acessar câmera:', error);
+                console.error('Erro câmera:', error);
                 updateStatus('🔴 Erro: ' + error.message, 'disconnected');
             }
         }
@@ -147,21 +184,32 @@
                 localStream = null;
             }
             
-            document.getElementById('videoContainer').style.display = 'none';
+            if (wakeLock) {
+                wakeLock.release();
+                wakeLock = null;
+            }
+            
+            if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+            }
+            
             updateStatus('⚫ Transmissão parada', 'disconnected');
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
             
             isTransmitting = false;
+            
+            // Notificar servidor que parou
+            fetch('end_session.php?session_id=' + sessionId);
         }
 
         function updateStatus(message, type) {
             const statusElement = document.getElementById('status');
             statusElement.textContent = message;
-            statusElement.className = 'status ' + type;
+            statusElement.className = type;
         }
 
-        // Transmitir frames para servidor
+        // Transmitir frames continuamente
         function startFrameTransmission() {
             const video = document.getElementById('localVideo');
             const canvas = document.createElement('canvas');
@@ -176,17 +224,16 @@
                 try {
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                     
-                    // Converter para JPEG com qualidade reduzida
                     canvas.toBlob(function(blob) {
                         sendFrameToServer(blob);
                     }, 'image/jpeg', 0.6);
                     
                 } catch (error) {
-                    console.log('Erro capturando frame:', error);
+                    console.log('Erro frame:', error);
                 }
                 
-                // Continuar capturando
-                setTimeout(captureFrame, 200); // 5 FPS
+                // Continuar mesmo em background
+                setTimeout(captureFrame, 300);
             }
             
             captureFrame();
@@ -198,18 +245,47 @@
             formData.append('session_id', sessionId);
             formData.append('timestamp', Date.now());
             
+            // Usar fetch com keepalive para background
             fetch('save_frame.php', {
                 method: 'POST',
-                body: formData
-            })
-            .catch(error => console.log('Erro enviando frame:', error));
+                body: formData,
+                keepalive: true
+            }).catch(error => {
+                console.log('Erro enviando frame:', error);
+            });
         }
 
-        // Parar transmissão se página for fechada
-        window.addEventListener('beforeunload', function() {
+        // Manter service worker vivo
+        function startKeepAlive() {
+            if (serviceWorker) {
+                keepAliveInterval = setInterval(() => {
+                    if (serviceWorker.active) {
+                        serviceWorker.active.postMessage({ type: 'KEEP_ALIVE' });
+                    }
+                }, 5000);
+            }
+        }
+
+        // Evento de instalação PWA
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            window.deferredPrompt = e;
+            document.getElementById('installBtn').classList.remove('hidden');
+        });
+
+        // Tentar manter ativo mesmo quando página não está visível
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && isTransmitting) {
+                console.log('Página visível novamente - retomando transmissão');
+            }
+        });
+
+        // Prevenir que usuário feche acidentalmente
+        window.addEventListener('beforeunload', (e) => {
             if (isTransmitting) {
-                // Notificar servidor que sessão terminou
-                fetch('end_session.php?session_id=' + sessionId);
+                e.preventDefault();
+                e.returnValue = 'A transmissão está ativa. Tem certeza que quer sair?';
+                return e.returnValue;
             }
         });
 
